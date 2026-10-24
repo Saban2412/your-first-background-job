@@ -19,6 +19,7 @@
   },
   "homepage": "https://github.com/Saban2412/your-first-background-job#readme",
   "dependencies": {
-    "express": "^5.3.0"
+    "express": "^5.3.0",
+    "inngest": "^4.26.0"
   }
 }
