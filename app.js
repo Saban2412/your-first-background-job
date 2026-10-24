@@ -18,13 +18,12 @@ app.get("/health", (req, res) => {
 });
 
 // -------------------------------------------------------------
-// STAGE 3: Background Function sa retries i greškom za "fail"
+// STAGE 2 & 3: Background Function (make-report)
 // -------------------------------------------------------------
 const makeReport = inngest.createFunction(
   {
     id: "make-report",
     triggers: [{ event: "report/requested" }],
-    // Konfigurišemo maksimalno 2 retrija (ukupno 3 pokušaja)
     retries: 2,
   },
   async ({ event, step }) => {
@@ -33,7 +32,6 @@ const makeReport = inngest.createFunction(
     await step.sleep("do-the-slow-work", "8s");
 
     await step.run("build-report", async () => {
-      // STAGE 3: Ako je tema "fail", simularamo krah sistema
       if (topic === "fail") {
         throw new Error("The report oven is broken!");
       }
@@ -51,12 +49,36 @@ const makeReport = inngest.createFunction(
 );
 
 // -------------------------------------------------------------
-// STAGE 3: Express Endpoints sa validacijom ulaza
+// STAGE 4: Cron Function (heartbeat)
+// -------------------------------------------------------------
+const heartbeat = inngest.createFunction(
+  {
+    id: "heartbeat",
+    triggers: [{ cron: "* * * * *" }],
+  },
+  async ({ step }) => {
+    await step.run("log-summary", async () => {
+      let pending = 0;
+      let done = 0;
+
+      for (const report of reportsDb.values()) {
+        if (report.status === "pending") pending++;
+        if (report.status === "done") done++;
+      }
+
+      const summary = `[CRON HEARTBEAT] Total reports: ${reportsDb.size} | Pending: ${pending} | Done: ${done}`;
+      console.log(summary);
+      return { summary };
+    });
+  },
+);
+
+// -------------------------------------------------------------
+// Express Endpoints
 // -------------------------------------------------------------
 app.post("/reports", async (req, res) => {
-  const { topic } = req.body;
+  const topic = req.body?.topic;
 
-  // STAGE 3 VALIDACIJA: Ako nema teme ili je prazna, vrati 400 Bad Request
   if (!topic || typeof topic !== "string" || topic.trim() === "") {
     return res.status(400).json({ error: "Field 'topic' is required" });
   }
@@ -88,7 +110,7 @@ app.use(
   "/api/inngest",
   serve({
     client: inngest,
-    functions: [makeReport],
+    functions: [makeReport, heartbeat],
   }),
 );
 
