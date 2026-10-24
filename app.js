@@ -6,9 +6,6 @@ import crypto from "node:crypto";
 const app = express();
 app.use(express.json());
 
-// -------------------------------------------------------------
-// STAGE 2: In-memory baza za izveštaje
-// -------------------------------------------------------------
 const reportsDb = new Map();
 
 export const inngest = new Inngest({
@@ -21,15 +18,14 @@ app.get("/health", (req, res) => {
 });
 
 // -------------------------------------------------------------
-// STAGE 2: Background Function (make-report)
-// -------------------------------------------------------------
-// -------------------------------------------------------------
-// STAGE 2: Background Function (make-report)
+// STAGE 3: Background Function sa retries i greškom za "fail"
 // -------------------------------------------------------------
 const makeReport = inngest.createFunction(
   {
     id: "make-report",
-    triggers: [{ event: "report/requested" }], // <--- OVDJE JE PROMJENA
+    triggers: [{ event: "report/requested" }],
+    // Konfigurišemo maksimalno 2 retrija (ukupno 3 pokušaja)
+    retries: 2,
   },
   async ({ event, step }) => {
     const { id, topic } = event.data;
@@ -37,8 +33,10 @@ const makeReport = inngest.createFunction(
     await step.sleep("do-the-slow-work", "8s");
 
     await step.run("build-report", async () => {
-      console.log("Tražim u DB report sa ID-jem:", id);
-      console.log("Trenutno stanje u DB:", reportsDb.get(id));
+      // STAGE 3: Ako je tema "fail", simularamo krah sistema
+      if (topic === "fail") {
+        throw new Error("The report oven is broken!");
+      }
 
       const existingReport = reportsDb.get(id);
       if (existingReport) {
@@ -53,13 +51,17 @@ const makeReport = inngest.createFunction(
 );
 
 // -------------------------------------------------------------
-// STAGE 2: Express Endpoints
+// STAGE 3: Express Endpoints sa validacijom ulaza
 // -------------------------------------------------------------
-
 app.post("/reports", async (req, res) => {
   const { topic } = req.body;
-  const id = crypto.randomUUID();
 
+  // STAGE 3 VALIDACIJA: Ako nema teme ili je prazna, vrati 400 Bad Request
+  if (!topic || typeof topic !== "string" || topic.trim() === "") {
+    return res.status(400).json({ error: "Field 'topic' is required" });
+  }
+
+  const id = crypto.randomUUID();
   const report = { id, topic, status: "pending" };
   reportsDb.set(id, report);
 
@@ -67,7 +69,7 @@ app.post("/reports", async (req, res) => {
     name: "report/requested",
     data: { id, topic },
   });
-  console.log("Spremljen report u DB sa ID-jem:", id);
+
   res.status(202).json(report);
 });
 
